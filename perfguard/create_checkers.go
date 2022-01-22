@@ -14,7 +14,7 @@ type targetChecker struct {
 }
 
 func (c *targetChecker) CheckTarget(target *lint.Target) error {
-	c.ctx.Target = target
+	c.ctx.Reset(target)
 	return c.impl.CheckPackage(&c.ctx, target.Files)
 }
 

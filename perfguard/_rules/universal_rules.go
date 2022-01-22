@@ -37,6 +37,9 @@ var Bundle = dsl.Bundle{}
 //
 // score5 is something that can make the code several times faster
 // or make it zero allocations (as opposed to the replaced form).
+//
+// A reformat tag means that applying the suggested quickfix requires
+// reformat to be executed unconditionally.
 
 //doc:summary Detects use cases for strings.Cut
 //doc:tags    o1 score3
@@ -155,7 +158,10 @@ func redundantSprint(m dsl.Matcher) {
 		Suggest(`$x`)
 
 	m.Match(`fmt.Sprint($x)`, `fmt.Sprintf("%s", $x)`, `fmt.Sprintf("%v", $x)`).
-		Where(m["x"].Type.ConvertibleTo(`string`) && !m["x"].Type.OfKind("numeric")).
+		Where(
+			m["x"].Type.ConvertibleTo(`string`) &&
+				!m["x"].Type.OfKind("numeric") &&
+				!m["x"].Type.Is(`[]rune`)).
 		Suggest(`string($x)`)
 }
 
@@ -490,6 +496,36 @@ func sliceClear(m dsl.Matcher) {
 		Report(`for ... { ... } => for $i := range $xs { $xs[$i] = $zero }`)
 }
 
+//doc:summary Detects cases where map clear idiom can be used
+//doc:tags    o1 score2 reformat
+//doc:before  o.set = make(map[string]int, len(o.set))
+//doc:after   for k := range o.set { delete(o.set, k) }
+func mapClear(m dsl.Matcher) {
+	m.Match(`$m = make(map[$_]$_, len($m))`).
+		Suggest(`for k := range $m { delete($m, k) }`)
+}
+
+//doc:summary Detects map <op>= patterns that can be rewritten to avoid double hashing
+//doc:tags    o1 score2
+func mapAssignOp(m dsl.Matcher) {
+	m.Match(`$m[$k] = $m[$k] + 1`, `$m[$k] += 1`).
+		Where(m["m"].Type.Is(`map[$_]$_`) && m["k"].Pure).
+		Suggest(`$m[$k]++`)
+
+	m.Match(`$m[$k] = $m[$k] + $v`).
+		Where(m["m"].Type.Is(`map[$_]$_`) && m["k"].Pure).
+		Suggest(`$m[$k] += $v`)
+	m.Match(`$m[$k] = $m[$k] - $v`).
+		Where(m["m"].Type.Is(`map[$_]$_`) && m["k"].Pure).
+		Suggest(`$m[$k] -= $v`)
+	m.Match(`$m[$k] = $m[$k] * $v`).
+		Where(m["m"].Type.Is(`map[$_]$_`) && m["k"].Pure).
+		Suggest(`$m[$k] *= $v`)
+	m.Match(`$m[$k] = $m[$k] / $v`).
+		Where(m["m"].Type.Is(`map[$_]$_`) && m["k"].Pure).
+		Suggest(`$m[$k] /= $v`)
+}
+
 //doc:summary Detects expressions like []rune(s)[0] that may cause unwanted rune slice allocation
 //doc:tags    o1 score4
 //doc:before  r := []rune(s)[0]
@@ -660,10 +696,10 @@ func rangeExprCopy(m dsl.Matcher) {
 //doc:summary Detects range loops that can be turned into a single append call
 //doc:tags    o1 score3
 func rangeToAppend(m dsl.Matcher) {
-	m.Match(`for $_, $x := range $src { $dst = append($dst, $x) }`).
-		Where(m["src"].Type.Is(`[]$_`)).
+	m.Match(`for _, $x := range $src { $dst = append($dst, $x) }`).
+		Where(m["src"].Type.Is(`[]$_`) && !m["dst"].Contains(`$x`) && m["src"].Type.IdenticalTo(m["dst"])).
 		Suggest(`$dst = append($dst, $src...)`).
-		Report(`for ... { ... } => $dst = append($dst, $src...)`)
+		Report(`for … { … } => $dst = append($dst, $src...)`)
 }
 
 //doc:summary Detects range loops that can be turned into a single copy call
@@ -673,9 +709,9 @@ func rangeToCopy(m dsl.Matcher) {
 		`for $i := range $src { $dst[$i] = $src[$i] }`,
 		`for $i, $x := range $src { $dst[$i] = $x }`,
 		`for $i := 0; $i < len($src); $i++ { $dst[$i] = $src[$i] }`).
-		Where(m["src"].Type.Is(`[]$_`)).
+		Where(m["src"].Type.Is(`[]$_`) && m["src"].Type.IdenticalTo(m["dst"])).
 		Suggest(`copy($dst, $src)`).
-		Report(`for ... { ... } => copy($dst, $src)`)
+		Report(`for … { … } => copy($dst, $src)`)
 }
 
 //doc:summary Detects loops where slice dst=src and they can be replaced with a copy call
@@ -776,4 +812,19 @@ func binaryWrite(m dsl.Matcher) {
 	m.Match(`binary.Write($w, $_, $s)`).
 		Where(m["$$"].Node.Parent().Is(`ExprStmt`) && m["s"].Type.Is(`string`) && m["w"].Type.HasMethod(`io.StringWriter.WriteString`)).
 		Suggest(`$w.WriteString($s)`)
+}
+
+//doc:summary Detects sync.Pool usage on non pointer objects
+//doc:tags    o1 score3
+func syncPoolPut(m dsl.Matcher) {
+	isPtrLike := func(x dsl.Var) bool {
+		return x.Type.Underlying().Is("*$_") || x.Type.Underlying().Is("chan $_") ||
+			x.Type.Underlying().Is("map[$_]$_") || x.Type.Underlying().Is("interface{$*_}") ||
+			x.Type.Underlying().Is(`func($*_) $*_`) || x.Type.Underlying().Is(`unsafe.Pointer`)
+	}
+
+	m.Match(`$x.Put($y)`).
+		Where(m["x"].Type.Is("sync.Pool") && !isPtrLike(m["y"])).
+		Report(`non-pointer values in sync.Pool involve extra allocation`).
+		At(m["y"])
 }

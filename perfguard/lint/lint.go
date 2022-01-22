@@ -12,15 +12,17 @@ type Warning struct {
 	Line     int
 	Tag      string
 	Text     string
-	Fix      *QuickFix
+
+	Fixes []TextEdit
 
 	SamplesTime time.Duration
 }
 
-type QuickFix struct {
+type TextEdit struct {
 	From        token.Pos
 	To          token.Pos
 	Replacement []byte
+	Reformat    bool
 }
 
 type SourceFile struct {

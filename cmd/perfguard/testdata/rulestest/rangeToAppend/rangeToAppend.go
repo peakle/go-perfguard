@@ -1,21 +1,31 @@
 package rulestest
 
 func Warn() {
-	var dstBytes []byte
+	dstBytes := make([]byte, 0, 10)
 	var srcBytes []byte
 
-	mapOfBytes := make(map[string][]byte)
+	mapOfBytes := make(map[string][]byte, 100)
 
-	for _, b := range srcBytes { // want `for ... { ... } => dstBytes = append(dstBytes, srcBytes...)`
+	for _, b := range srcBytes { // want `for … { … } => dstBytes = append(dstBytes, srcBytes...)`
 		dstBytes = append(dstBytes, b)
 	}
 
-	for _, b := range srcBytes { // want `for ... { ... } => mapOfBytes["k"] = append(mapOfBytes["k"], srcBytes...)`
+	for _, b := range srcBytes { // want `for … { … } => mapOfBytes["k"] = append(mapOfBytes["k"], srcBytes...)`
 		mapOfBytes["k"] = append(mapOfBytes["k"], b)
 	}
 
-	for _, b := range srcBytes { // want `for ... { ... } => srcBytes = append(srcBytes, srcBytes...)`
+	for _, b := range srcBytes { // want `for … { … } => srcBytes = append(srcBytes, srcBytes...)`
 		srcBytes = append(srcBytes, b)
+	}
+
+	{
+		type object struct {
+			bytes []byte
+		}
+		o := new(object)
+		for _, b := range srcBytes { // want `for … { … } => o.bytes = append(o.bytes, srcBytes...)`
+			o.bytes = append(o.bytes, b)
+		}
 	}
 }
 
@@ -50,6 +60,36 @@ func Ignore() {
 		for _, b := range m {
 			dstBytes = append(dstBytes, b)
 		}
+	}
+
+	{
+		type object struct {
+			bytes []byte
+		}
+		var objects []*object
+		for i, b := range srcBytes {
+			objects[i].bytes = append(objects[i].bytes, b)
+		}
+	}
+
+	{
+		type Book struct {
+			authorID int
+		}
+		var books []Book
+		m := make(map[int][]Book, 10)
+		for _, book := range books {
+			m[book.authorID] = append(m[book.authorID], book)
+		}
+	}
+
+	{
+		var ifaces []interface{}
+		ints := make([]int, 0, len(ifaces))
+		for _, x := range ints {
+			ifaces = append(ifaces, x)
+		}
+		_ = ifaces
 	}
 
 	_ = srcBytes
